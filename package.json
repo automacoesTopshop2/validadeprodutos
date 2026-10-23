@@ -1,0 +1,19 @@
+{
+  "name": "validadeprodutos",
+  "version": "1.0.0",
+  "description": "",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "gerar-seed": "node scripts/gerar-seed.js"
+  },
+  "license": "ISC",
+  "dependencies": {
+    "express": "^5.3.0",
+    "pg": "^8.23.1",
+    "xlsx": "^0.18.5"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
