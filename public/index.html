@@ -31,7 +31,7 @@ header p{font-size:12px;color:var(--muted2);margin-top:4px;font-family:'IBM Plex
 .cfg input{background:var(--bg2);border:1px solid var(--border);border-radius:4px;padding:5px 8px;color:var(--text);font-family:inherit;font-size:11px;outline:none}
 .cfg input[type=number]{width:64px}
 .cfg input:focus{border-color:var(--border2)}
-#upload-zone{border:1px dashed var(--border2);border-radius:6px;padding:3rem 2rem;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;margin-bottom:2rem;position:relative}
+#upload-zone{border:1px dashed var(--border2);border-radius:6px;padding:1.75rem 2rem;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;margin-bottom:2rem;position:relative}
 #upload-zone:hover,#upload-zone.drag{border-color:var(--muted2);background:var(--bg2)}
 #upload-zone input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;z-index:10}
 #upload-zone .icon{font-size:1.8rem;margin-bottom:.75rem;opacity:.35}
@@ -104,6 +104,20 @@ td input{width:64px;background:var(--bg);border:1px solid var(--border2);border-
 #editor .preview{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px 10px;margin-bottom:1rem;color:var(--text)}
 #editor .acts{display:flex;gap:6px;justify-content:space-between;flex-wrap:wrap}
 #editor .info{color:var(--muted);margin-bottom:.75rem}
+#login-bg{position:fixed;inset:0;background:var(--bg);display:none;align-items:center;justify-content:center;z-index:60;padding:16px}
+#login{width:100%;max-width:340px;font-family:'IBM Plex Mono',monospace;font-size:11px}
+#login h1{font-size:1rem;font-weight:500;letter-spacing:.05em;margin-bottom:4px}
+#login p{color:var(--muted2);margin-bottom:1.5rem}
+#login label{display:flex;flex-direction:column;gap:4px;color:var(--muted2);margin-bottom:12px}
+#login input,#login select{background:var(--bg2);border:1px solid var(--border2);border-radius:4px;padding:8px 10px;color:var(--text);font-family:inherit;font-size:12px;outline:none}
+#login input:focus,#login select:focus{border-color:var(--muted2)}
+#login button{width:100%;padding:9px;font-size:12px;margin-top:4px}
+#login .erro{color:var(--red);min-height:16px;margin-top:10px}
+#user-box{font-size:11px;font-family:'IBM Plex Mono',monospace;color:var(--muted2);margin-bottom:4px}
+#user-box a{color:var(--muted2);cursor:pointer;text-decoration:underline}
+#stk-bar{display:flex;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:1rem}
+#stk-bar .btn{padding:8px 18px;font-size:12px}
+#stk-status{font-size:11px;font-family:'IBM Plex Mono',monospace;color:var(--muted2)}
 @media (max-width:760px){#summary{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
@@ -112,9 +126,10 @@ td input{width:64px;background:var(--bg);border:1px solid var(--border2);border-
 <header>
   <div>
     <h1>ANALISADOR DE VALIDADE — ESTOQUE</h1>
-    <p>Carregue a planilha exportada do Stockfy. Suplementos usam o prazo de consumo do pote; o resto, 90 dias.</p>
+    <p>Estoque direto do Stockfy. Suplementos usam o prazo de consumo do pote; o resto, 90 dias.</p>
   </div>
   <div style="text-align:right">
+    <div id="user-box"></div>
     <div id="db-status">Carregando cadastro de consumo…</div>
     <div class="import btn sm" style="margin-top:6px" title="Planilha no formato Produtos_analise.xlsx (SKU, Subcategoria, Item)">
       Atualizar lista de produtos ↑<input type="file" id="prod-input" accept=".xlsx,.xls">
@@ -125,20 +140,23 @@ td input{width:64px;background:var(--bg);border:1px solid var(--border2);border-
 <div class="cfg">
   <label>Dias de entrega <input type="number" id="cfg-entrega" min="0" max="60"></label>
   <label>Alertar com antecedência de <input type="number" id="cfg-antec" min="0" max="365"> dias</label>
-  <label>Seu nome <input type="text" id="cfg-user" placeholder="para registrar edições" style="width:160px"></label>
   <label>Editar consumo do SKU <input type="text" id="sku-busca" placeholder="ex. 6713" style="width:90px"
     onkeydown="if(event.key==='Enter')abrirEditor(this.value.trim())"></label>
   <button class="btn sm" onclick="abrirEditor(document.getElementById('sku-busca').value.trim())">Abrir</button>
 </div>
 
-<div id="upload-zone">
-  <input type="file" id="file-input" accept=".xlsx,.xls,.csv">
-  <div class="icon">⬆</div>
-  <h2>Arraste a planilha aqui ou clique para selecionar</h2>
-  <p>.xlsx · .xls · .csv: exportação padrão do Stockfy</p>
+<div id="stk-bar">
+  <button class="btn pri" id="btn-stk" onclick="atualizarStockfy()">⟳ Atualizar do Stockfy</button>
+  <span id="stk-status"></span>
 </div>
 
-<div id="loading"><span class="spinner"></span>Processando planilha...</div>
+<div id="upload-zone">
+  <input type="file" id="file-input" accept=".xlsx,.xls,.csv">
+  <h2>Ou arraste a planilha exportada aqui</h2>
+  <p>.xlsx · .xls · .csv: alternativa se o Stockfy estiver fora do ar</p>
+</div>
+
+<div id="loading"><span class="spinner"></span><span id="loading-txt">Processando planilha...</span></div>
 
 <div id="summary">
   <div class="sc green"><div class="label">TOTAL DE ITENS</div><div class="num" id="s-total">—</div></div>
@@ -177,6 +195,22 @@ td input{width:64px;background:var(--bg);border:1px solid var(--border2);border-
   </div>
 </div>
 
+<div id="login-bg">
+  <form id="login" onsubmit="event.preventDefault(); entrar();">
+    <h1>ANALISADOR DE VALIDADE</h1>
+    <p>Entre com seu usuário do Stockfy.</p>
+    <div id="login-cred">
+      <label>Usuário <input type="text" id="lg-user" autocomplete="username" required></label>
+      <label>Senha <input type="password" id="lg-pass" autocomplete="current-password" required></label>
+    </div>
+    <div id="login-dep" style="display:none">
+      <label>Depositante <select id="lg-dep"></select></label>
+    </div>
+    <button class="btn pri" type="submit" id="lg-btn">Entrar</button>
+    <div class="erro" id="lg-erro"></div>
+  </form>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -191,8 +225,7 @@ function lsSet(k, v){ try { localStorage.setItem(k, v); } catch(e){} }
 
 var CFG = {
   entrega: +lsGet('cfg-entrega', 7),
-  antec:   +lsGet('cfg-antec', 30),
-  user:    lsGet('cfg-user', '')
+  antec:   +lsGet('cfg-antec', 30)
 };
 
 var PANELS = [
@@ -238,11 +271,10 @@ function atualizarDescricao(){
 
 // ── Config inputs ───────────────────────────────────────────────────
 (function initCfg(){
-  var e = document.getElementById('cfg-entrega'), a = document.getElementById('cfg-antec'), u = document.getElementById('cfg-user');
-  e.value = CFG.entrega; a.value = CFG.antec; u.value = CFG.user;
+  var e = document.getElementById('cfg-entrega'), a = document.getElementById('cfg-antec');
+  e.value = CFG.entrega; a.value = CFG.antec;
   e.onchange = function(){ CFG.entrega = Math.max(0, +e.value || 0); lsSet('cfg-entrega', CFG.entrega); reprocess(); };
   a.onchange = function(){ CFG.antec = Math.max(0, +a.value || 0); lsSet('cfg-antec', CFG.antec); reprocess(); };
-  u.onchange = function(){ CFG.user = u.value.trim(); lsSet('cfg-user', CFG.user); };
   atualizarDescricao();
 })();
 
@@ -251,10 +283,83 @@ function toast(msg){
   clearTimeout(toast._t); toast._t = setTimeout(function(){ t.style.display = 'none'; }, 3000);
 }
 
+// ── Sessão (login do Stockfy) ───────────────────────────────────────
+function ssGet(){ try { return JSON.parse(sessionStorage.getItem('sess') || 'null'); } catch(e){ return null; } }
+function ssSet(v){ try { if (v) sessionStorage.setItem('sess', JSON.stringify(v)); else sessionStorage.removeItem('sess'); } catch(e){} }
+var SESS = ssGet();
+var LOGIN_TMP = null;
+
+function api(path, opts){
+  opts = opts || {};
+  opts.headers = Object.assign({ 'Content-Type':'application/json' }, opts.headers || {}, SESS ? { 'X-Session': SESS.sessao } : {});
+  return fetch(path, opts).then(function(r){
+    return r.json().catch(function(){ return {}; }).then(function(j){
+      if (r.status === 401) { mostrarLogin(j.erro || 'Sessão expirada. Entre novamente.'); throw new Error(j.erro || 'Sessão expirada'); }
+      if (!r.ok) throw new Error(j.erro || ('HTTP '+r.status));
+      return j;
+    });
+  });
+}
+
+function mostrarLogin(msg){
+  SESS = null; ssSet(null);
+  document.getElementById('login-cred').style.display = '';
+  document.getElementById('login-dep').style.display = 'none';
+  document.getElementById('lg-btn').textContent = 'Entrar';
+  document.getElementById('lg-erro').textContent = msg || '';
+  document.getElementById('login-bg').style.display = 'flex';
+  setTimeout(function(){ document.getElementById('lg-user').focus(); }, 0);
+}
+
+function entrar(){
+  var btn = document.getElementById('lg-btn'), erro = document.getElementById('lg-erro');
+  erro.textContent = '';
+  // 2ª etapa: escolha do depositante
+  if (LOGIN_TMP) {
+    LOGIN_TMP.depositanteId = +document.getElementById('lg-dep').value;
+    concluirLogin(LOGIN_TMP); LOGIN_TMP = null; return;
+  }
+  btn.disabled = true; btn.textContent = 'Entrando…';
+  fetch('api/login', { method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({ usuario: document.getElementById('lg-user').value.trim(), senha: document.getElementById('lg-pass').value }) })
+    .then(function(r){ return r.json().then(function(j){ if (!r.ok) throw new Error(j.erro || ('HTTP '+r.status)); return j; }); })
+    .then(function(j){
+      document.getElementById('lg-pass').value = '';
+      var s = { sessao: j.sessao, usuario: j.usuario, depositantes: j.depositantes, depositanteId: j.depositantes.length === 1 ? j.depositantes[0].id : null };
+      if (j.depositantes.length > 1) {
+        LOGIN_TMP = s;
+        document.getElementById('lg-dep').innerHTML = j.depositantes.map(function(d){ return '<option value="'+d.id+'">'+esc(d.nome)+'</option>'; }).join('');
+        document.getElementById('login-cred').style.display = 'none';
+        document.getElementById('login-dep').style.display = '';
+        btn.textContent = 'Continuar';
+      } else concluirLogin(s);
+    })
+    .catch(function(e){ erro.textContent = e.message; btn.textContent = 'Entrar'; })
+    .finally(function(){ btn.disabled = false; });
+}
+
+function concluirLogin(s){
+  SESS = s; ssSet(s);
+  document.getElementById('login-bg').style.display = 'none';
+  mostrarUsuario();
+  carregarCadastro().then(function(){ if (!RAW) atualizarStockfy(); else reprocess(); });
+}
+
+function sair(){
+  if (SESS) fetch('api/logout', { method:'POST', headers:{ 'X-Session': SESS.sessao } }).catch(function(){});
+  mostrarLogin('');
+}
+
+function mostrarUsuario(){
+  var dep = SESS && (SESS.depositantes || []).filter(function(d){ return d.id === SESS.depositanteId; })[0];
+  document.getElementById('user-box').innerHTML = SESS
+    ? esc(SESS.usuario) + (dep ? ' · ' + esc(dep.nome) : '') + ' · <a onclick="sair()">Sair</a>' : '';
+}
+
 // ── Banco (API) ─────────────────────────────────────────────────────
 function carregarCadastro(){
   var st = document.getElementById('db-status');
-  return fetch('api/produtos').then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.json(); })
+  return api('api/produtos')
     .then(function(rows){
       CAD = {};
       var ok = 0, pend = 0;
@@ -267,15 +372,44 @@ function carregarCadastro(){
 }
 
 function salvarCadastro(codigo, dados){
-  dados.usuario = CFG.user;
-  return fetch('api/produtos/'+encodeURIComponent(codigo), {
-    method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(dados)
-  }).then(function(r){ return r.json().then(function(j){ if(!r.ok) throw new Error(j.erro || ('HTTP '+r.status)); return j; }); })
+  return api('api/produtos/'+encodeURIComponent(codigo), { method:'PUT', body: JSON.stringify(dados) })
     .then(function(row){ CAD[codigo] = row; reprocess(); toast('Salvo: '+codigo); return true; })
     .catch(function(err){ toast('Erro ao salvar: '+err.message); return false; });
 }
 
-carregarCadastro();
+// ── Estoque direto do Stockfy ───────────────────────────────────────
+function atualizarStockfy(){
+  if (!SESS) { mostrarLogin(''); return; }
+  var btn = document.getElementById('btn-stk'), st = document.getElementById('stk-status');
+  btn.disabled = true;
+  st.textContent = '';
+  document.getElementById('loading-txt').textContent = 'Buscando estoque no Stockfy…';
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('upload-zone').style.display = 'none';
+  var dep = SESS.depositanteId ? '?depositante='+encodeURIComponent(SESS.depositanteId) : '';
+  api('api/stockfy/estoque'+dep)
+    .then(function(j){
+      RAW = j.linhas;
+      reprocess();
+      st.textContent = 'Estoque do Stockfy · '+j.linhas.length.toLocaleString('pt-BR')+' posições · '+new Date(j.atualizadoEm).toLocaleString('pt-BR');
+      // em segundo plano: inclui suplementos novos no cadastro de consumo
+      return api('api/stockfy/sincronizar-produtos', { method:'POST', body: JSON.stringify({ depositante: SESS.depositanteId }) })
+        .then(function(s){ if (s.novos) { toast(s.novos+' suplementos novos adicionados ao cadastro'); return carregarCadastro().then(reprocess); } })
+        .catch(function(e){ console.warn('Sincronização de produtos falhou:', e.message); });
+    })
+    .catch(function(e){
+      document.getElementById('loading').style.display = 'none';
+      if (!RAW) document.getElementById('upload-zone').style.display = 'block';
+      st.textContent = 'Erro ao buscar no Stockfy: '+e.message;
+    })
+    .finally(function(){ btn.disabled = false; document.getElementById('loading-txt').textContent = 'Processando planilha...'; });
+}
+
+// inicialização: valida a sessão salva na aba ou pede login
+(function init(){
+  if (!SESS) { mostrarLogin(''); return; }
+  api('api/sessao').then(function(){ mostrarUsuario(); return carregarCadastro(); }).then(function(){ atualizarStockfy(); }).catch(function(){});
+})();
 
 // ── Upload estoque ──────────────────────────────────────────────────
 document.getElementById('file-input').onchange = function() { if (this.files && this.files[0]) handle(this.files[0]); };
@@ -321,8 +455,7 @@ document.getElementById('prod-input').onchange = function(){
         linhas.push({ codigo: String(col(r,['SKU','Código','Codigo'])).trim(), subcategoria: String(col(r,['Subcategoria'])), nome: String(col(r,['Item','Produto','Nome'])) });
       });
     });
-    fetch('api/importar', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(linhas)})
-      .then(function(r){ return r.json(); })
+    api('api/importar', {method:'POST', body: JSON.stringify(linhas)})
       .then(function(j){ toast(j.consumiveis+' suplementos lidos, '+j.atualizados+' gravados (edições manuais preservadas)'); return carregarCadastro(); })
       .then(reprocess)
       .catch(function(err){ toast('Erro na importação: '+err.message); })

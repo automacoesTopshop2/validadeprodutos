@@ -1,7 +1,11 @@
 const express = require('express');
 const path = require('path');
 const { Pool } = require('pg');
+const crypto = require('crypto');
 const { analisar, ehConsumivel } = require('./extrator');
+
+const STOCKFY_API = (process.env.STOCKFY_API_URL || 'https://api.stockfylog.com').replace(/\/$/, '');
+const SESSAO_HORAS = 12;
 
 const PORT = process.env.PORT || 3000;
 const pool = new Pool({
@@ -12,16 +16,37 @@ const pool = new Pool({
 const app = express();
 app.use(express.json({ limit: '5mb' }));
 
-// Senha opcional para o site inteiro (defina APP_PASSWORD no Railway)
-if (process.env.APP_PASSWORD) {
-  app.use((req, res, next) => {
-    const h = req.headers.authorization || '';
-    const [, b64] = h.split(' ');
-    const [, pass] = Buffer.from(b64 || '', 'base64').toString().split(':');
-    if (pass === process.env.APP_PASSWORD) return next();
-    res.set('WWW-Authenticate', 'Basic realm="Validade"').status(401).send('Acesso restrito');
-  });
+// ── Sessões: o login do site é o login do Stockfy ──────────────────
+// A senha nunca é guardada nem registrada em log; só o token devolvido pelo Stockfy, em memória.
+const sessoes = new Map(); // sid -> { token, usuario, depositantes, depositanteId, expira }
+
+function lerSessao(req) {
+  const sid = req.get('X-Session');
+  const s = sid && sessoes.get(sid);
+  if (!s) return null;
+  if (s.expira < Date.now()) { sessoes.delete(sid); return null; }
+  return s;
 }
+function exigirSessao(req, res, next) {
+  const s = lerSessao(req);
+  if (!s) return res.status(401).json({ erro: 'Sessão expirada. Entre novamente.', relogar: true });
+  req.sessao = s;
+  next();
+}
+setInterval(() => { const t = Date.now(); for (const [k, v] of sessoes) if (v.expira < t) sessoes.delete(k); }, 30 * 60 * 1000).unref();
+
+async function stockfy(sessao, caminho, params) {
+  const url = new URL(STOCKFY_API + caminho);
+  for (const [k, v] of Object.entries(params || {})) if (v != null && v !== '') url.searchParams.set(k, v);
+  const r = await fetch(url, { headers: { Authorization: 'Bearer ' + sessao.token, Accept: 'application/json' } });
+  if (r.status === 401 || r.status === 403) { const e = new Error('Token do Stockfy expirado'); e.status = 401; e.relogar = true; throw e; }
+  if (r.status === 404) return [];
+  if (!r.ok) { const e = new Error('Stockfy respondeu HTTP ' + r.status + ': ' + (await r.text()).slice(0, 200)); e.status = 502; throw e; }
+  const j = await r.json();
+  return Array.isArray(j) ? j : (j.data || j.items || j.itens || []);
+}
+
+const texto = v => (v && typeof v === 'object') ? (v.descricao || v.titulo || v.nome || v.description || '') : (v == null ? '' : String(v));
 
 async function migrar() {
   await pool.query(`
@@ -87,7 +112,83 @@ async function importar(itens) {
   return n;
 }
 
-app.get('/api/produtos', async (req, res) => {
+// Login: repassa usuário/senha ao Stockfy e abre uma sessão no site
+app.post('/api/login', async (req, res) => {
+  const { usuario, senha } = req.body || {};
+  if (!usuario || !senha) return res.status(400).json({ erro: 'Informe usuário e senha' });
+  let r;
+  try {
+    r = await fetch(STOCKFY_API + '/api/Auth/login', {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ username: String(usuario), password: String(senha) }),
+    });
+  } catch (e) { return res.status(502).json({ erro: 'Não foi possível conectar ao Stockfy' }); }
+  if (r.status === 401 || r.status === 400) return res.status(401).json({ erro: 'Usuário ou senha inválidos' });
+  if (!r.ok) return res.status(502).json({ erro: 'Stockfy respondeu HTTP ' + r.status });
+  const j = await r.json();
+  if (!j.token) return res.status(502).json({ erro: 'Stockfy não devolveu token' });
+  const depositantes = (j.empresaDepositantes || []).map(d => ({ id: d.empresaDepositanteId, nome: [...new Set([d.empresa, d.depositante].filter(Boolean))].join(' · ') }));
+  const sid = crypto.randomBytes(24).toString('hex');
+  sessoes.set(sid, {
+    token: j.token, usuario: String(usuario).slice(0, 60), depositantes,
+    depositanteId: depositantes.length === 1 ? depositantes[0].id : null,
+    expira: Date.now() + SESSAO_HORAS * 3600 * 1000,
+  });
+  console.log(`Login: ${String(usuario).slice(0, 60)}`);
+  res.json({ sessao: sid, usuario: String(usuario).slice(0, 60), depositantes });
+});
+
+app.post('/api/logout', (req, res) => { const sid = req.get('X-Session'); if (sid) sessoes.delete(sid); res.json({ ok: true }); });
+
+app.get('/api/sessao', exigirSessao, (req, res) => {
+  res.json({ usuario: req.sessao.usuario, depositantes: req.sessao.depositantes, depositanteId: req.sessao.depositanteId });
+});
+
+// Estoque completo do Stockfy, já no formato da planilha exportada
+app.get('/api/stockfy/estoque', exigirSessao, async (req, res, next) => {
+  try {
+    const dep = req.query.depositante || req.sessao.depositanteId;
+    const LIM = 1000, linhas = [];
+    for (let page = 1; page <= 300; page++) {
+      const lote = await stockfy(req.sessao, '/api/Estoque/GetEstoques', { EmpresaDepositanteId: dep, Page: page, Limit: LIM });
+      for (const e of lote) {
+        if (!(Number(e.quantidade) > 0)) continue;
+        linhas.push({
+          'Endereço': e.endereco || '', 'Código': e.codigoExterno || '', 'Produto': e.produto || '',
+          'Lote': e.variacao || '', 'Quantidade': Number(e.quantidade) || 0,
+          'Validade': e.vencimento ? String(e.vencimento).slice(0, 10) : '',
+          'Tipo endereço': e.tipoEndereco || '', 'LPN': e.lpn || '',
+        });
+      }
+      if (lote.length < LIM) break;
+    }
+    res.json({ atualizadoEm: new Date().toISOString(), linhas });
+  } catch (e) { if (e.relogar) return res.status(401).json({ erro: e.message, relogar: true }); next(e); }
+});
+
+// Inclui no cadastro de consumo os suplementos novos do Stockfy (não altera os que já existem)
+app.post('/api/stockfy/sincronizar-produtos', exigirSessao, async (req, res, next) => {
+  try {
+    const dep = req.body && req.body.depositante || req.sessao.depositanteId;
+    const prods = await stockfy(req.sessao, '/api/Produto/GetProdutos', { EmpresaDepositanteId: dep });
+    const { rows } = await pool.query('SELECT codigo FROM produtos_consumo');
+    const existentes = new Set(rows.map(r => r.codigo));
+    const novos = [];
+    for (const p of prods) {
+      const codigo = String(p.codigoExterno || '').trim();
+      const sub = texto(p.subCategoria);
+      if (!codigo || existentes.has(codigo) || !ehConsumivel(sub)) continue;
+      existentes.add(codigo);
+      const nome = String(p.nome || '').trim();
+      novos.push({ codigo, nome, subcategoria: sub, ...analisar(nome) });
+    }
+    const n = novos.length ? await importar(novos) : 0;
+    if (n) console.log(`Sincronização Stockfy: ${n} suplementos novos`);
+    res.json({ produtosStockfy: prods.length, novos: n });
+  } catch (e) { if (e.relogar) return res.status(401).json({ erro: e.message, relogar: true }); next(e); }
+});
+
+app.get('/api/produtos', exigirSessao, async (req, res) => {
   const { rows } = await pool.query(
     `SELECT codigo, nome, unidades, forma, dose_dia::float AS dose_dia, dias_consumo, status, origem, atualizado_em, atualizado_por
        FROM produtos_consumo`);
@@ -95,7 +196,7 @@ app.get('/api/produtos', async (req, res) => {
 });
 
 // Salva edição manual (unidades, dose, ignorar)
-app.put('/api/produtos/:codigo', async (req, res) => {
+app.put('/api/produtos/:codigo', exigirSessao, async (req, res) => {
   const codigo = String(req.params.codigo).trim();
   const b = req.body || {};
   const int = v => (v === '' || v == null ? null : Math.round(Number(v)));
@@ -113,12 +214,12 @@ app.put('/api/produtos/:codigo', async (req, res) => {
       status = EXCLUDED.status, nome = COALESCE(produtos_consumo.nome, EXCLUDED.nome),
       origem = 'manual', atualizado_em = now(), atualizado_por = EXCLUDED.atualizado_por
     RETURNING codigo, nome, unidades, forma, dose_dia::float AS dose_dia, dias_consumo, status, origem, atualizado_em, atualizado_por`,
-    [codigo, b.nome || null, unidades, dose, dias, status, (b.usuario || '').slice(0, 60) || null]);
+    [codigo, b.nome || null, unidades, dose, dias, status, req.sessao.usuario]);
   res.json(rows[0]);
 });
 
 // Importa uma nova planilha de produtos (mesmo formato do Produtos_analise.xlsx), já processada no navegador
-app.post('/api/importar', async (req, res) => {
+app.post('/api/importar', exigirSessao, async (req, res) => {
   const linhas = Array.isArray(req.body) ? req.body : [];
   const itens = [];
   const vistos = new Set();
@@ -135,7 +236,7 @@ app.post('/api/importar', async (req, res) => {
 
 app.use(express.static(path.join(__dirname, 'public')));
 
-app.use((err, req, res, next) => { console.error(err); res.status(500).json({ erro: err.message }); });
+app.use((err, req, res, next) => { console.error(err); res.status(err.status || 500).json({ erro: err.message }); });
 
 migrar()
   .then(() => app.listen(PORT, () => console.log('Rodando na porta ' + PORT)))
