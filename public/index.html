@@ -159,7 +159,7 @@ td input{width:64px;background:var(--bg);border:1px solid var(--border2);border-
 <div id="loading"><span class="spinner"></span><span id="loading-txt">Processando planilha...</span></div>
 
 <div id="summary">
-  <div class="sc green"><div class="label">TOTAL DE ITENS</div><div class="num" id="s-total">—</div></div>
+  <div class="sc green"><div class="label">TOTAL DE ITENS</div><div class="num" id="s-total">—</div><div class="label" id="s-total-sub" style="margin:4px 0 0"></div></div>
   <div class="sc red"><div class="label">VENCIDOS</div><div class="num" id="s0">—</div></div>
   <div class="sc amber"><div class="label">VALIDADE CURTA</div><div class="num" id="s1">—</div></div>
   <div class="sc violet"><div class="label">PENDENTES DE CADASTRO</div><div class="num" id="s2">—</div></div>
@@ -525,6 +525,12 @@ function aplicarRegra(r) {
   }
 }
 
+var ENDERECOS_IGNORADOS = ['transito'];   // comparação sem acento e sem maiúsculas
+function enderecoIgnorado(e){
+  var n = String(e || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').trim().toLowerCase();
+  return ENDERECOS_IGNORADOS.indexOf(n) >= 0;
+}
+
 var HOJE;
 function reprocess() {
   atualizarDescricao();
@@ -548,6 +554,10 @@ function reprocess() {
     if (d) aplicarRegra(r);
     return r;
   });
+
+  // Endereços ignorados na análise (ex.: Trânsito)
+  var nIgnorados = 0;
+  data = data.filter(function(r){ if (enderecoIgnorado(r._endereco)) { nIgnorados++; return false; } return true; });
 
   var comData = data.filter(function(r){ return r._valDate; });
 
@@ -588,7 +598,8 @@ function reprocess() {
     document.getElementById('s'+t).textContent = DS[t].length;
     document.getElementById('b'+t).textContent = DS[t].length;
   }
-  document.getElementById('s-total').textContent = RAW.length.toLocaleString('pt-BR');
+  document.getElementById('s-total').textContent = data.length.toLocaleString('pt-BR');
+  document.getElementById('s-total-sub').textContent = nIgnorados ? nIgnorados.toLocaleString('pt-BR')+' em trânsito ignorados' : '';
 
   document.getElementById('loading').style.display  = 'none';
   document.getElementById('summary').style.display  = 'grid';
@@ -745,7 +756,20 @@ function sortFS(t){
 function srt(t, c) { var s = SS[t]; s.a = (s.c === c) ? !s.a : true; s.c = c; sortFS(t); PG[t] = 1; render(t); }
 
 // ── Export ──────────────────────────────────────────────────────────
+// Validade curta: relação enxuta — um SKU por validade, com os dias de consumo
+function exportValidadeCurta(){
+  var vistos = {}, rows = [];
+  FS[1].slice().sort(function(a,b){ return (a._codigo).localeCompare(b._codigo, 'pt-BR', {numeric:true}) || (a._valDate - b._valDate); })
+    .forEach(function(r){
+      var k = r._codigo + '|' + fmt(r._valDate);
+      if (vistos[k]) return; vistos[k] = 1;
+      rows.push([r._codigo, fmt(r._valDate), r._diasConsumo == null ? '' : r._diasConsumo]);
+    });
+  return [['SKU','VALIDADE','DIAS DE CONSUMO']].concat(rows);
+}
+
 function exportRows(t){
+  if (t === 1) return exportValidadeCurta();
   var cols = PANELS[t].cols.filter(function(c){ return c[0]; });
   var hdr = cols.map(function(c){ return c[1]; });
   var rows = FS[t].map(function(r){
