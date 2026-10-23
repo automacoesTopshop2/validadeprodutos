@@ -91,6 +91,18 @@ td input{width:64px;background:var(--bg);border:1px solid var(--border2);border-
 .import{position:relative;overflow:hidden;display:inline-block}
 .import input{position:absolute;inset:0;opacity:0;cursor:pointer}
 #toast{position:fixed;bottom:20px;right:20px;background:var(--bg3);border:1px solid var(--border2);padding:8px 14px;border-radius:4px;font-size:11px;font-family:'IBM Plex Mono',monospace;display:none}
+#editor-bg{position:fixed;inset:0;background:rgba(0,0,0,.6);display:none;align-items:center;justify-content:center;z-index:50;padding:16px}
+#editor{background:var(--bg2);border:1px solid var(--border2);border-radius:6px;padding:1.25rem 1.5rem;width:100%;max-width:520px;font-family:'IBM Plex Mono',monospace;font-size:11px}
+#editor h3{font-size:12px;font-weight:500;letter-spacing:.03em;margin-bottom:4px}
+#editor .nome{color:var(--muted2);margin-bottom:1rem;white-space:normal}
+#editor .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px 14px;margin-bottom:.75rem}
+#editor label{display:flex;flex-direction:column;gap:4px;color:var(--muted2)}
+#editor input[type=number]{background:var(--bg);border:1px solid var(--border2);border-radius:3px;padding:6px 8px;color:var(--text);font-family:inherit;font-size:12px;width:100%}
+#editor .ou{grid-column:1/-1;color:var(--muted);text-align:center;margin:2px 0}
+#editor .full{grid-column:1/-1}
+#editor .preview{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:8px 10px;margin-bottom:1rem;color:var(--text)}
+#editor .acts{display:flex;gap:6px;justify-content:space-between;flex-wrap:wrap}
+#editor .info{color:var(--muted);margin-bottom:.75rem}
 @media (max-width:760px){#summary{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
@@ -113,6 +125,9 @@ td input{width:64px;background:var(--bg);border:1px solid var(--border2);border-
   <label>Dias de entrega <input type="number" id="cfg-entrega" min="0" max="60"></label>
   <label>Alertar com antecedência de <input type="number" id="cfg-antec" min="0" max="365"> dias</label>
   <label>Seu nome <input type="text" id="cfg-user" placeholder="para registrar edições" style="width:160px"></label>
+  <label>Editar consumo do SKU <input type="text" id="sku-busca" placeholder="ex. 6713" style="width:90px"
+    onkeydown="if(event.key==='Enter')abrirEditor(this.value.trim())"></label>
+  <button class="btn sm" onclick="abrirEditor(document.getElementById('sku-busca').value.trim())">Abrir</button>
 </div>
 
 <div id="upload-zone">
@@ -142,6 +157,25 @@ td input{width:64px;background:var(--bg);border:1px solid var(--border2);border-
   <div id="panels"></div>
 </div>
 
+<div id="editor-bg" onclick="if(event.target===this)fecharEditor()">
+  <div id="editor">
+    <h3>CONSUMO · SKU <span id="ed-cod"></span></h3>
+    <div class="nome" id="ed-nome"></div>
+    <div class="info" id="ed-info"></div>
+    <div class="grid">
+      <label>Unidades / porções no pote <input type="number" id="ed-unid" min="1" oninput="previewEditor()"></label>
+      <label>Dose por dia <input type="number" id="ed-dose" min="0.25" step="0.25" placeholder="1" oninput="previewEditor()"></label>
+      <div class="ou">— ou informe direto —</div>
+      <label class="full">Dias de consumo (sobrepõe unidades ÷ dose) <input type="number" id="ed-dias" min="1" placeholder="ex. 454" oninput="previewEditor()"></label>
+    </div>
+    <div class="preview" id="ed-preview"></div>
+    <div class="acts">
+      <button class="btn sm" onclick="salvarEditor(true)" title="Não é consumível por dose: usar regra fixa de 90 dias">Não se aplica</button>
+      <span><button class="btn sm" onclick="fecharEditor()">Cancelar</button> <button class="btn sm pri" onclick="salvarEditor(false)">Salvar</button></span>
+    </div>
+  </div>
+</div>
+
 <div id="toast"></div>
 
 <script>
@@ -167,8 +201,8 @@ var PANELS = [
     desc:'', // preenchido em atualizarDescricao()
     cols:[['_endereco','ENDEREÇO'],['_codigo','CÓDIGO'],['_produto','PRODUTO'],['_lote','LOTE'],['_qtyN','QTD'],['_valDate','VALIDADE'],['_diasRest','DIAS P/ VENCER'],['_unid','UNID.'],['_dose','DOSE/DIA'],['_diasConsumo','DIAS CONSUMO'],['_limite','LIMITE VENDA'],['_folga','DIAS ATÉ LIMITE'],['_criterio','CRITÉRIO'],[null,'']] },
   { title:'PENDENTES DE CADASTRO', name:'pendentes',
-    desc:'Suplementos com validade em até '+JANELA_PENDENTES+' dias cujo título não informa a quantidade (ex.: pó, líquido, nome sem "caps/tabs"). Preencha unidades/porções e a dose diária. Enquanto pendente, o item usa a regra fixa de '+REGRA_FIXA+' dias.',
-    cols:[['_codigo','CÓDIGO'],['_produto','PRODUTO'],['_valDate','VALIDADE + PRÓX.'],['_diasRest','DIAS P/ VENCER'],['_qtyN','QTD TOTAL'],['_tipo','TIPO'],[null,'UNIDADES / PORÇÕES'],[null,'DOSE/DIA'],[null,'']] },
+    desc:'Suplementos com validade em até '+JANELA_PENDENTES+' dias cujo título não informa a quantidade (ex.: pó, líquido, nome sem "caps/tabs"). Clique em Cadastrar para informar unidades/porções e dose, ou os dias de consumo direto. Enquanto pendente, o item usa a regra fixa de '+REGRA_FIXA+' dias.',
+    cols:[['_codigo','CÓDIGO'],['_produto','PRODUTO'],['_valDate','VALIDADE + PRÓX.'],['_diasRest','DIAS P/ VENCER'],['_qtyN','QTD TOTAL'],['_tipo','TIPO'],[null,'']] },
   { title:'VALIDADE SUSPEITA', name:'validade_suspeita',
     desc:'Lote ≠ LOTE UNICO com validade maior que 6 anos: provável erro de cadastro.',
     cols:[['_endereco','ENDEREÇO'],['_codigo','CÓDIGO'],['_produto','PRODUTO'],['_lote','LOTE'],['_qtyN','QTD'],['_valDate','VALIDADE'],['_anos','ANOS RESTANTES']] }
@@ -178,7 +212,6 @@ var RAW = null;               // linhas da planilha carregada
 var CAD = {};                 // cadastro de consumo vindo do banco (por código)
 var DS = [[],[],[],[]], FS = [[],[],[],[]], PG = [1,1,1,1], QS = ['','','',''];
 var SS = [{c:null,a:true},{c:null,a:true},{c:null,a:true},{c:null,a:true}];
-var EDIT = {};                // códigos em edição na aba validade curta
 
 // ── Montagem dos painéis ────────────────────────────────────────────
 (function buildPanels(){
@@ -237,8 +270,8 @@ function salvarCadastro(codigo, dados){
   return fetch('api/produtos/'+encodeURIComponent(codigo), {
     method:'PUT', headers:{'Content-Type':'application/json'}, body: JSON.stringify(dados)
   }).then(function(r){ return r.json().then(function(j){ if(!r.ok) throw new Error(j.erro || ('HTTP '+r.status)); return j; }); })
-    .then(function(row){ CAD[codigo] = row; delete EDIT[codigo]; reprocess(); toast('Salvo: '+codigo); })
-    .catch(function(err){ toast('Erro ao salvar: '+err.message); });
+    .then(function(row){ CAD[codigo] = row; reprocess(); toast('Salvo: '+codigo); return true; })
+    .catch(function(err){ toast('Erro ao salvar: '+err.message); return false; });
 }
 
 carregarCadastro();
@@ -337,12 +370,13 @@ function esc(s) { return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g
 function aplicarRegra(r) {
   var cad = CAD[r._codigo];
   r._cad = cad || null;
-  if (cad && cad.status === 'ok' && cad.unidades) {
+  if (cad && cad.status === 'ok' && (cad.dias_consumo || cad.unidades)) {
     var dose = cad.dose_dia || DOSE_PADRAO;
-    r._unid = cad.unidades;
-    r._dose = dose;
-    r._doseConf = !!cad.dose_dia;
-    r._diasConsumo = Math.ceil(cad.unidades / dose);
+    r._unid = cad.unidades || null;
+    r._dose = cad.dias_consumo ? (cad.dose_dia || null) : dose;
+    r._doseConf = !!cad.dose_dia || !!cad.dias_consumo;
+    r._diasManual = !!cad.dias_consumo;
+    r._diasConsumo = cad.dias_consumo || Math.ceil(cad.unidades / dose);
     // último dia em que dá pra vender: cliente recebe após X dias de entrega e
     // toma a 1ª dose no mesmo dia; a última dose cai em (diasConsumo − 1) dias depois.
     r._limite = addDias(r._valDate, -(r._diasConsumo - 1) - CFG.entrega);
@@ -350,7 +384,7 @@ function aplicarRegra(r) {
     r._criterio = 'consumo';
     r._curta = r._diasRest > 0 && r._folga <= CFG.antec;
   } else {
-    r._unid = null; r._dose = null; r._doseConf = false; r._diasConsumo = null;
+    r._unid = null; r._dose = null; r._doseConf = false; r._diasManual = false; r._diasConsumo = null;
     r._limite = null; r._folga = null;
     r._criterio = REGRA_FIXA + 'd fixo';
     r._curta = r._diasRest > 0 && r._diasRest <= REGRA_FIXA;
@@ -440,24 +474,53 @@ function cellsBase(r){
     +'<td>'+fmt(r._valDate)+'</td>';
 }
 
-function inputsCad(codigo, unid, dose, placeholderDose){
-  var id = 'e_'+codigo.replace(/[^\w-]/g,'_');
-  return { id:id,
-    unid: '<input type="number" min="1" id="'+id+'_u" value="'+(unid||'')+'" placeholder="ex. 100">',
-    dose: '<input type="number" min="0.25" step="0.25" id="'+id+'_d" value="'+(dose||'')+'" placeholder="'+(placeholderDose||DOSE_PADRAO)+'">' };
-}
-
-function salvarLinha(codigo, ignorar){
-  var id = 'e_'+codigo.replace(/[^\w-]/g,'_');
-  var u = document.getElementById(id+'_u'), d = document.getElementById(id+'_d');
-  var dados = { ignorar: !!ignorar, nome: (CAD[codigo] && CAD[codigo].nome) || null };
-  if (!ignorar) {
-    dados.unidades = u ? u.value : null;
-    dados.dose_dia = d ? d.value : null;
-    if (!dados.unidades) { toast('Informe as unidades/porções'); return; }
+// ── Editor de consumo (modal) ───────────────────────────────────────
+var ED_COD = null;
+function nomeDoCodigo(codigo){
+  if (CAD[codigo] && CAD[codigo].nome) return CAD[codigo].nome;
+  if (RAW) for (var i=0; i<RAW.length; i++) {
+    if (String(col(RAW[i],['Código','Codigo','SKU','code'])).trim() === codigo) return String(col(RAW[i],['Produto','product','Descrição','descricao']));
   }
-  salvarCadastro(codigo, dados);
+  return '';
 }
+function abrirEditor(codigo){
+  if (!codigo) { toast('Informe o SKU'); return; }
+  ED_COD = codigo;
+  var c = CAD[codigo] || {};
+  document.getElementById('ed-cod').textContent = codigo;
+  document.getElementById('ed-nome').textContent = nomeDoCodigo(codigo) || '(produto fora do cadastro de suplementos: será incluído ao salvar)';
+  var info = c.origem === 'manual'
+    ? 'Editado manualmente'+(c.atualizado_por ? ' por '+c.atualizado_por : '')+(c.atualizado_em ? ' em '+new Date(c.atualizado_em).toLocaleDateString('pt-BR') : '')
+    : (c.status === 'ok' ? 'Valores extraídos do título' : (c.status === 'granel' ? 'Pó/líquido: título sem contagem de unidades' : (c.status === 'ignorado' ? 'Marcado como "não se aplica"' : 'Sem cadastro de consumo')));
+  document.getElementById('ed-info').textContent = info;
+  document.getElementById('ed-unid').value = c.unidades || '';
+  document.getElementById('ed-dose').value = c.dose_dia || '';
+  document.getElementById('ed-dias').value = c.dias_consumo || '';
+  previewEditor();
+  document.getElementById('editor-bg').style.display = 'flex';
+  setTimeout(function(){ document.getElementById(c.dias_consumo || !c.unidades ? 'ed-dias' : 'ed-dose').focus(); }, 0);
+}
+function fecharEditor(){ document.getElementById('editor-bg').style.display = 'none'; ED_COD = null; }
+function previewEditor(){
+  var u = +document.getElementById('ed-unid').value || 0, d = +document.getElementById('ed-dose').value || 0,
+      dias = +document.getElementById('ed-dias').value || 0, el = document.getElementById('ed-preview');
+  var n = dias || (u ? Math.ceil(u / (d || DOSE_PADRAO)) : 0);
+  if (!n) { el.innerHTML = '<span class="muted">Sem dados: o item usa a regra fixa de '+REGRA_FIXA+' dias.</span>'; return; }
+  var origem = dias ? 'informado direto' : (u+' ÷ '+(d || DOSE_PADRAO+' (padrão)')+' por dia');
+  el.innerHTML = 'Dura <b>'+n+' dias</b> ('+origem+'). Vender até: validade − '+(n-1)+' − '+CFG.entrega+' dias de entrega = <b>validade − '+(n-1+CFG.entrega)+' dias</b>.';
+}
+function salvarEditor(ignorar){
+  var codigo = ED_COD; if (!codigo) return;
+  var dados = { ignorar: !!ignorar, nome: nomeDoCodigo(codigo) || null };
+  if (!ignorar) {
+    dados.unidades = document.getElementById('ed-unid').value;
+    dados.dose_dia = document.getElementById('ed-dose').value;
+    dados.dias_consumo = document.getElementById('ed-dias').value;
+    if (!dados.unidades && !dados.dias_consumo) { toast('Informe unidades ou dias de consumo'); return; }
+  }
+  salvarCadastro(codigo, dados).then(function(ok){ if (ok) fecharEditor(); });
+}
+document.addEventListener('keydown', function(e){ if (e.key === 'Escape') fecharEditor(); });
 
 function rowHtml(t, r){
   if (t === 0) return '<tr>'+cellsBase(r)+'<td><span class="tag tag-r">'+r._diasVenc+'d</span></td></tr>';
@@ -465,12 +528,9 @@ function rowHtml(t, r){
 
   var cod = esc(r._codigo), codJs = esc(JSON.stringify(r._codigo));
   if (t === 2) {
-    var inp = inputsCad(r._codigo, null, null);
     return '<tr><td>'+cod+'</td><td title="'+esc(r._produto)+'">'+esc(r._produto)+'</td><td>'+fmt(r._valDate)+'</td>'
       +'<td><span class="tag tag-v">'+r._diasRest+'d</span></td><td>'+fmtQty(r._qtyN)+'</td><td class="muted">'+r._tipo+'</td>'
-      +'<td>'+inp.unid+'</td><td>'+inp.dose+'</td>'
-      +'<td><button class="btn sm pri" onclick="salvarLinha('+codJs+')">Salvar</button> '
-      +'<button class="btn sm" title="Não é consumível por dose: usar regra fixa" onclick="salvarLinha('+codJs+',true)">Não se aplica</button></td></tr>';
+      +'<td><button class="btn sm pri" onclick="abrirEditor('+codJs+')">Cadastrar</button></td></tr>';
   }
 
   // t === 1: validade curta
@@ -480,27 +540,18 @@ function rowHtml(t, r){
     folgaTag = '<span class="tag '+cls+'">'+r._folga+'d</span>';
   }
   var diasCls = r._diasRest <= 30 ? 'tag-r' : 'tag-a';
-  var unidCell, doseCell, acao;
-  if (EDIT[r._codigo]) {
-    var c = CAD[r._codigo] || {};
-    var e = inputsCad(r._codigo, c.unidades, c.dose_dia);
-    unidCell = e.unid; doseCell = e.dose;
-    acao = '<button class="btn sm pri" onclick="salvarLinha('+codJs+')">Salvar</button> <button class="btn sm" onclick="toggleEdit('+codJs+')">×</button>';
-  } else {
-    unidCell = r._unid ? r._unid : '<span class="muted">—</span>';
-    doseCell = r._dose ? (r._dose + (r._doseConf ? '' : '<span class="muted" title="Dose não cadastrada: usando padrão"> *</span>')) : '<span class="muted">—</span>';
-    acao = r._cad ? '<button class="btn sm" title="Editar unidades/dose" onclick="toggleEdit('+codJs+')">✎</button>' : '';
-  }
+  var unidCell = r._unid ? r._unid : '<span class="muted">—</span>';
+  var doseCell = r._dose ? (r._dose + (r._doseConf ? '' : '<span class="muted" title="Dose não cadastrada: usando padrão"> *</span>')) : '<span class="muted">—</span>';
+  var acao = '<button class="btn sm" title="Editar consumo deste SKU" onclick="abrirEditor('+codJs+')">✎</button>';
   return '<tr>'+cellsBase(r)
     +'<td><span class="tag '+diasCls+'">'+r._diasRest+'d</span></td>'
     +'<td>'+unidCell+'</td><td>'+doseCell+'</td>'
-    +'<td>'+(r._diasConsumo || '<span class="muted">—</span>')+'</td>'
+    +'<td>'+(r._diasConsumo ? r._diasConsumo + (r._diasManual ? '<span class="muted" title="Dias informados manualmente"> ✎</span>' : '') : '<span class="muted">—</span>')+'</td>'
     +'<td>'+(r._limite ? fmt(r._limite) : '<span class="muted">—</span>')+'</td>'
     +'<td>'+(folgaTag || '<span class="muted">—</span>')+'</td>'
     +'<td class="muted">'+r._criterio+'</td><td>'+acao+'</td></tr>';
 }
 
-function toggleEdit(codigo){ if (EDIT[codigo]) delete EDIT[codigo]; else EDIT[codigo] = true; render(1); }
 
 function render(t) {
   var data  = FS[t], pg = PG[t], start = (pg-1) * PS;
@@ -562,7 +613,6 @@ function srt(t, c) { var s = SS[t]; s.a = (s.c === c) ? !s.a : true; s.c = c; so
 // ── Export ──────────────────────────────────────────────────────────
 function exportRows(t){
   var cols = PANELS[t].cols.filter(function(c){ return c[0]; });
-  if (t === 2) cols = cols.concat([['_x','UNIDADES / PORÇÕES'],['_x','DOSE/DIA']]);
   var hdr = cols.map(function(c){ return c[1]; });
   var rows = FS[t].map(function(r){
     return cols.map(function(c){

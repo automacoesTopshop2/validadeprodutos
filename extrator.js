@@ -11,7 +11,7 @@ function norm(s) {
 const SUBS_OK = /suple|suuple|vitamin|oleos naturais|saude infantil|saude da mulher/i;
 
 const ADJ = '(?:(?:veg(?:an|gie|etarian)?|liq(?:uid)?|mini|embo|fish|delayed[\\s-]?release|dr|chewable|vegetarian)[\\s-]+)*';
-const UNIT = '(?<u>' + [
+const UNIT_LIST = [
   'vcaps?', 'vegcaps?', 'drcaps?', 'vgels?', 'vegels?',
   'soft[\\s-]?gels?', 'softgls?', 'sofgels?', 'sft[\\s-]?gels?', 'sfgs?', 'sgls?', 'sgels?', 'sg', 'fsg',
   'mini[\\s-]?tabs?', 'minis', 'fishies', 'tabs?', 'tablets?', 'tabls?', 'tbls?', 'tb', 'caplets?', 'comprimidos?', 'comps?',
@@ -19,12 +19,15 @@ const UNIT = '(?<u>' + [
   'lozenges?', 'loz', 'pastilhas?', 'chewables?', 'chwbls', 'chews?', 'gumm(?:y|ies)', 'gomas?',
   'servings?', 'pkts?', 'tabletes?', 'comprs?', 'vg', 'doses?', 'porcoes?', 'packets?', 'sachets?', 'sticks?', 'stick[\\s-]?packs?', 'bags',
   'ct', 'count', 'unid(?:ades)?', 'un'
-].join('|') + ')';
+];
+const UNIT = '(?<u>' + UNIT_LIST.join('|') + ')';
+// unidade ANTES do número ("Tab-100"): sem 'c'/'cp' para não confundir com "Vitamin C-1000"
+const UNIT_PRE = '(?<u>' + UNIT_LIST.filter(u => u !== 'c' && u !== 'cp').join('|') + ')';
 
 const PATS = [
   new RegExp('(?<![\\d.,])(?<n>\\d{1,4})\\s*[-x]?\\s*' + ADJ + UNIT + '\\b', 'gi'),          // "100 caps", "60 Veg Caps"
   new RegExp('box\\s+of\\s+(?<n>\\d{1,4})(?<u>)', 'gi'),                                     // "Box of 30"
-  new RegExp('\\b' + UNIT + '\\s*[-x:]?\\s*(?<n>\\d{1,4})(?![\\d.,]*\\s*(?:mg|mcg|g|ml|iu|ui|%|bi))\\b', 'gi'), // "Tab-100"
+  new RegExp('\\b' + UNIT_PRE + '\\s*[-x:]?\\s*(?<n>\\d{1,4})(?![\\d.,]*\\s*(?:mg|mcg|g|ml|iu|ui|%|bi))\\b', 'gi'), // "Tab-100"
 ];
 const BULK = /(?<![\w.])\d+(?:[.,]\d+)?\s*(?:lbs?|oz|fl\.?\s*oz|ml|l|kg|g|gr|gramas)\b/i;
 const MULT = /^\s*(\d+)\s*(?:x|unid\.?|un\.?|unidades|frascos?)\b/i;

@@ -37,12 +37,30 @@ async function migrar() {
       atualizado_em  TIMESTAMPTZ NOT NULL DEFAULT now(),
       atualizado_por TEXT
     )`);
+  await pool.query(`ALTER TABLE produtos_consumo ADD COLUMN IF NOT EXISTS dias_consumo INTEGER`); // duração informada direto (sobrepõe unidades ÷ dose)
   const { rows } = await pool.query('SELECT count(*)::int n FROM produtos_consumo');
   if (rows[0].n === 0) {
     const seed = require('./data/produtos_seed.json');
     await importar(seed);
     console.log(`Seed inicial: ${seed.length} produtos`);
+  } else {
+    await reanalisarTitulos();
   }
+}
+
+// A cada deploy, reaplica o extrator atual nos produtos que vieram do título (corrige melhorias na regra).
+async function reanalisarTitulos() {
+  const { rows } = await pool.query(`SELECT codigo, nome, unidades, forma, dose_dia::float AS dose_dia, status FROM produtos_consumo WHERE origem = 'titulo'`);
+  let n = 0;
+  for (const r of rows) {
+    const a = analisar(r.nome);
+    if (a.unidades !== r.unidades || a.status !== r.status || (a.dose_dia ?? null) !== (r.dose_dia ?? null)) {
+      await pool.query(`UPDATE produtos_consumo SET unidades=$2, forma=$3, dose_dia=$4, status=$5, atualizado_em=now() WHERE codigo=$1 AND origem='titulo'`,
+        [r.codigo, a.unidades, a.forma, a.dose_dia, a.status]);
+      n++;
+    }
+  }
+  if (n) console.log(`Reanálise de títulos: ${n} produtos atualizados`);
 }
 
 // Insere/atualiza a partir do título. Nunca sobrescreve o que foi editado manualmente.
@@ -71,7 +89,7 @@ async function importar(itens) {
 
 app.get('/api/produtos', async (req, res) => {
   const { rows } = await pool.query(
-    `SELECT codigo, nome, unidades, forma, dose_dia::float AS dose_dia, status, origem, atualizado_em, atualizado_por
+    `SELECT codigo, nome, unidades, forma, dose_dia::float AS dose_dia, dias_consumo, status, origem, atualizado_em, atualizado_por
        FROM produtos_consumo`);
   res.json(rows);
 });
@@ -82,19 +100,20 @@ app.put('/api/produtos/:codigo', async (req, res) => {
   const b = req.body || {};
   const int = v => (v === '' || v == null ? null : Math.round(Number(v)));
   const num = v => (v === '' || v == null ? null : Number(v));
-  const unidades = int(b.unidades), dose = num(b.dose_dia);
+  const unidades = int(b.unidades), dose = num(b.dose_dia), dias = int(b.dias_consumo);
   if (unidades !== null && !(unidades > 0 && unidades <= 10000)) return res.status(400).json({ erro: 'Unidades inválidas' });
   if (dose !== null && !(dose > 0 && dose <= 50)) return res.status(400).json({ erro: 'Dose inválida' });
-  const status = b.ignorar ? 'ignorado' : (unidades ? 'ok' : 'nao_encontrado');
+  if (dias !== null && !(dias > 0 && dias <= 5000)) return res.status(400).json({ erro: 'Dias de consumo inválidos' });
+  const status = b.ignorar ? 'ignorado' : ((unidades || dias) ? 'ok' : 'nao_encontrado');
   const { rows } = await pool.query(`
-    INSERT INTO produtos_consumo (codigo, nome, unidades, dose_dia, status, origem, atualizado_por)
-    VALUES ($1,$2,$3,$4,$5,'manual',$6)
+    INSERT INTO produtos_consumo (codigo, nome, unidades, dose_dia, dias_consumo, status, origem, atualizado_por)
+    VALUES ($1,$2,$3,$4,$5,$6,'manual',$7)
     ON CONFLICT (codigo) DO UPDATE SET
-      unidades = EXCLUDED.unidades, dose_dia = EXCLUDED.dose_dia, status = EXCLUDED.status,
-      nome = COALESCE(produtos_consumo.nome, EXCLUDED.nome),
+      unidades = EXCLUDED.unidades, dose_dia = EXCLUDED.dose_dia, dias_consumo = EXCLUDED.dias_consumo,
+      status = EXCLUDED.status, nome = COALESCE(produtos_consumo.nome, EXCLUDED.nome),
       origem = 'manual', atualizado_em = now(), atualizado_por = EXCLUDED.atualizado_por
-    RETURNING codigo, nome, unidades, forma, dose_dia::float AS dose_dia, status, origem, atualizado_em, atualizado_por`,
-    [codigo, b.nome || null, unidades, dose, status, (b.usuario || '').slice(0, 60) || null]);
+    RETURNING codigo, nome, unidades, forma, dose_dia::float AS dose_dia, dias_consumo, status, origem, atualizado_em, atualizado_por`,
+    [codigo, b.nome || null, unidades, dose, dias, status, (b.usuario || '').slice(0, 60) || null]);
   res.json(rows[0]);
 });
 
